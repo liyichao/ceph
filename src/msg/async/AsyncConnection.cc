@@ -641,6 +641,41 @@ void AsyncConnection::mark_down()
   protocol->stop();
 }
 
+void AsyncConnection::cancel_ops(set<ceph_tid_t> &ops)
+{
+  std::lock_guard<std::mutex> l(write_lock);
+  auto it = out_q.begin();
+  while (it != out_q.end() && !ops.empty()) {
+    auto lit = it->second.begin();
+    while (lit != it->second.end()) {
+      auto p = ops.find(lit->second->get_tid());
+      if (p != ops.end()) {
+        ops.erase(p);
+        lit->second->put();
+        lit = it->second.erase(lit);
+      } else {
+        lit++;
+      }
+    }
+    if (it->second.empty()) {
+      it = out_q.erase(it);
+    } else {
+      it++;
+    }
+  }
+  auto sit = sent.begin();
+  while (sit != sent.end() && !ops.empty()) {
+    auto p = ops.find((*sit)->get_tid());
+    if (p != ops.end()) {
+      ops.erase(p);
+      (*sit)->put();
+      sit = sent.erase(sit);
+    } else {
+      sit++;
+    }
+  }
+}
+
 void AsyncConnection::handle_write()
 {
   ldout(async_msgr->cct, 4) << __func__ << dendl;

@@ -1078,7 +1078,9 @@ void ProtocolV1::randomize_out_seq() {
 ssize_t ProtocolV1::write_message(Message *m, bufferlist &bl, bool more) {
   FUNCTRACE(cct);
   ceph_assert(connection->center->in_thread());
-  m->set_seq(++out_seq);
+  if (m->get_seq() == 0) {
+    m->set_seq(++out_seq);
+  }
 
   if (messenger->crcflags & MSG_CRC_HEADER) {
     m->calc_header_crc();
@@ -1169,7 +1171,6 @@ void ProtocolV1::requeue_sent() {
   }
 
   list<pair<bufferlist, Message *> > &rq = out_q[CEPH_MSG_PRIO_HIGHEST];
-  out_seq -= sent.size();
   while (!sent.empty()) {
     Message *m = sent.back();
     sent.pop_back();
@@ -1179,14 +1180,13 @@ void ProtocolV1::requeue_sent() {
   }
 }
 
-uint64_t ProtocolV1::discard_requeued_up_to(uint64_t out_seq, uint64_t seq) {
+void ProtocolV1::discard_requeued_up_to(uint64_t seq) {
   ldout(cct, 10) << __func__ << " " << seq << dendl;
   std::lock_guard<std::mutex> l(connection->write_lock);
   if (out_q.count(CEPH_MSG_PRIO_HIGHEST) == 0) {
-    return seq;
+    return;
   }
   list<pair<bufferlist, Message *> > &rq = out_q[CEPH_MSG_PRIO_HIGHEST];
-  uint64_t count = out_seq;
   while (!rq.empty()) {
     pair<bufferlist, Message *> p = rq.front();
     if (p.second->get_seq() == 0 || p.second->get_seq() > seq) break;
@@ -1195,10 +1195,8 @@ uint64_t ProtocolV1::discard_requeued_up_to(uint64_t out_seq, uint64_t seq) {
                    << dendl;
     p.second->put();
     rq.pop_front();
-    count++;
   }
   if (rq.empty()) out_q.erase(CEPH_MSG_PRIO_HIGHEST);
-  return count;
 }
 
 /*
@@ -1646,7 +1644,7 @@ CtPtr ProtocolV1::handle_ack_seq(char *buffer, int r) {
   newly_acked_seq = *((uint64_t *)buffer);
   ldout(cct, 2) << __func__ << " got newly_acked_seq " << newly_acked_seq
                 << " vs out_seq " << out_seq << dendl;
-  out_seq = discard_requeued_up_to(out_seq, newly_acked_seq);
+  discard_requeued_up_to(newly_acked_seq);
 
   bufferlist bl;
   uint64_t s = in_seq;

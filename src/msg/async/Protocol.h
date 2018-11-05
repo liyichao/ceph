@@ -291,7 +291,7 @@ protected:
   ssize_t write_message(Message *m, bufferlist &bl, bool more);
 
   void requeue_sent();
-  uint64_t discard_requeued_up_to(uint64_t out_seq, uint64_t seq);
+  void discard_requeued_up_to(uint64_t seq);
   void discard_out_queue();
 
   void reset_recv_state();
